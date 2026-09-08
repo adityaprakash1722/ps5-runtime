@@ -46,4 +46,7 @@ if(BUILD_TESTING)
     add_test(NAME cli COMMAND "${Python3_EXECUTABLE}"
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_tests.py" "$<TARGET_FILE:ps5rt>")
     set_tests_properties(cli PROPERTIES TIMEOUT 60)
+    add_test(NAME corpus COMMAND "${Python3_EXECUTABLE}"
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus_tests.py" "$<TARGET_FILE:ps5rt>")
+    set_tests_properties(corpus PROPERTIES TIMEOUT 60)
 endif()

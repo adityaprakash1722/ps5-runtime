@@ -101,6 +101,10 @@ except the loader's current 4,096-program-header policy.
 
 ## What comes next
 
+For repeatable read-only batch inspection, see the
+[local validation workflow](docs/local-validation.md). Its reports must stay
+outside Git and contain sensitive metadata; ordinary CI uses synthetic inputs only.
+
 First establish a controlled, synthetic execution test and compare its results
 with a trusted reference. Only then expand the executable format and platform
 services against verified evidence. Graphics, audio, input, storage, scheduling,
