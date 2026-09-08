@@ -1,12 +1,16 @@
 # Project instructions
 
 This is a private, experimental PS5-to-PC runtime project. The current milestone
-is generic ELF inspection and an offline loader foundation, not game execution.
+includes ELF inspection, offline loading, and controlled execution experiments;
+game execution is not implemented.
 
 - Use C++20 for the core, CMake/CTest for builds/tests, and Python standard library
   only for fixture generation and command-line integration tests.
-- Do not execute supplied guest binaries or include third-party/internal material
-  in commits. Keep test inputs synthetic and generate them under the build folder.
+- Authorized supplied material may be analyzed and executed locally as supported
+  by the implementation. Do not treat local execution as a permission blocker.
+  Do not bypass missing loader/ABI behavior or describe unsupported execution as
+  success. Keep internal material out of commits and CI; committed tests remain
+  synthetic. Preserve local evidence separately from published implementation.
 - Do not copy source from external emulator projects into this repository.
 - Never turn an unsupported operation into reported success. Use stable diagnostic
   codes and keep structural validity separate from runtime support.

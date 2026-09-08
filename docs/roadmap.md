@@ -7,17 +7,18 @@ date based on this foundation.
 
 | Stage | Deliverable | Evidence required before expanding |
 | --- | --- | --- |
-| 0: current | ELF inspection and bounded offline layout | Synthetic expected-value and rejection tests; Windows/Linux builds; sanitizer checks |
-| 1: controlled execution | A deliberately tiny synthetic program, with a defined host/guest boundary | Expected registers, memory, return path, and fault behavior; no game inputs |
+| 0: implemented subset | ELF inspection and bounded offline layout | Synthetic expected-value and rejection tests; Windows/Linux builds; sanitizer checks |
+| 1a: fixed native experiment | Original instruction fixtures in a worker process; independent expected-result checks | RAX, memory, return, fault, and timeout checks; no platform compatibility claim |
+| 1b: execution integration | Explicit guest memory and startup contract connected to loading | Address translations, stack/ABI behavior, entry validation, fault diagnostics; supported local inputs |
 | 2: platform loading | A documented executable subset, relocations, imports, startup, and TLS | Versioned format evidence and independent tests for each supported behavior |
 | 3: essential services | Memory, threads, synchronization, clocks, files, and diagnostics | Small reference programs; error paths and concurrency behavior compared against a trusted reference |
 | 4: graphics/audio/input | Minimal rendering and playback with observable synchronization | Known-image/audio results, command traces, precision checks, input latency measurements |
 | 5: a narrow game target | One explicitly selected, authorized build and configuration | Repeatable scenes, correctness comparisons, crash recovery, long-running tests |
 | 6: quality and breadth | Broader workloads and sustained smoothness | Regression matrix across game versions, host hardware, drivers, and settings |
 
-These stages can require revisiting earlier assumptions. Stage 1 still needs an
-explicit execution design: native execution, translation, or another controlled
-mechanism. Similar CPU instruction sets are helpful but do not settle system
+These stages can require revisiting earlier assumptions. Stage 1a explores native
+execution; it does not settle the final execution architecture or connect a
+guest ELF to host execution. Similar CPU instruction sets do not settle system
 calls, memory behavior, exception handling, or the platform ABI. Unknown calls
 must stop with a useful diagnostic or return a justified error—not fabricated
 success. A **system call** is a request from a program to its operating-system
@@ -51,5 +52,6 @@ good to us” and an FPS screenshot are not sufficient acceptance tests.
 - Publish compatibility claims only with reproducible scope: build, settings,
   hardware, test sequence, known failures, and evidence—not a vague “supported.”
 
-The next implementation decision is stage 1's execution boundary and reference
-test design. It is not yet time to load an arbitrary game into the host process.
+The next implementation decision is stage 1b's guest memory/startup contract and
+reference tests. Authorized material may be analyzed and executed locally where
+supported; missing loader/ABI behavior is a technical gap, not a permission gap.

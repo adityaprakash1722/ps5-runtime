@@ -20,6 +20,9 @@ No console SDK, game code, firmware, keys, or community emulator source is inclu
   zero-fill the remaining space. The CLI only reports the plan.
 - Human-readable summaries, versioned JSON reports, and deterministic diagnostics.
 - Synthetic positive, negative, boundary, truncation, and seeded-mutation tests.
+- A separate [native execution experiment](docs/execution-experiment.md): fixed
+  original instruction fixtures with arithmetic, memory, fault, and timeout tests.
+  This does not execute an ELF input or implement the PS5 ABI.
 
 An accepted inspection means only that the implemented checks passed. It is not
 a complete ELF conformance check, a runnable-image result, or a PS5 compatibility test.
@@ -31,6 +34,9 @@ Requirements: CMake 3.24+, a C++20 compiler, and Python 3.10+ for tests and samp
 generation. No third-party C++ libraries or Python packages are needed. Windows
 uses Visual Studio 2022 C++ Build Tools with a Windows SDK. Run from a Developer
 PowerShell/command prompt where `cmake`, `ctest`, and `python` are available.
+
+The native experiment requires Windows MSVC x64 or Linux x86-64. Use
+`-DPS5RT_NATIVE_PROBE=OFF` for an inspection-only build on other targets.
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
@@ -105,9 +111,10 @@ For repeatable read-only batch inspection, see the
 [local validation workflow](docs/local-validation.md). Its reports must stay
 outside Git and contain sensitive metadata; ordinary CI uses synthetic inputs only.
 
-First establish a controlled, synthetic execution test and compare its results
-with a trusted reference. Only then expand the executable format and platform
-services against verified evidence. Graphics, audio, input, storage, scheduling,
+The first fixed native-execution experiment is implemented with C++ and Python
+expected-result checks. Next connect controlled execution to an explicit guest
+memory/startup model, then expand loading and platform services against verified
+evidence. Graphics, audio, input, storage, scheduling,
 game compatibility, and frame-pacing work are separate milestones—not features
 implied by reading an ELF file. See the [evidence-gated roadmap](docs/roadmap.md).
 

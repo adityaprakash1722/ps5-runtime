@@ -3,6 +3,7 @@ project(ps5_runtime VERSION 0.1.0 LANGUAGES CXX)
 
 option(PS5RT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(PS5RT_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer (Clang/GCC)" OFF)
+option(PS5RT_NATIVE_PROBE "Build fixed synthetic native execution experiment (x86-64 Windows/Linux)" ON)
 
 add_library(ps5rt_core src/elf.cpp src/loader.cpp)
 target_include_directories(ps5rt_core PUBLIC include)
@@ -35,6 +36,17 @@ add_executable(ps5rt src/main.cpp)
 target_link_libraries(ps5rt PRIVATE ps5rt_core)
 ps5rt_checks(ps5rt)
 
+if(PS5RT_NATIVE_PROBE)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64)$"
+       OR NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (WIN32 AND MSVC)))
+        message(FATAL_ERROR "Native probe requires x86-64 Windows MSVC or Linux; use -DPS5RT_NATIVE_PROBE=OFF for inspection-only builds")
+    endif()
+    add_executable(ps5rt_native_probe experiments/native_probe.cpp)
+    target_compile_features(ps5rt_native_probe PRIVATE cxx_std_20)
+    set_target_properties(ps5rt_native_probe PROPERTIES CXX_EXTENSIONS OFF)
+    ps5rt_checks(ps5rt_native_probe)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(ps5rt_tests tests/core_tests.cpp)
@@ -49,4 +61,9 @@ if(BUILD_TESTING)
     add_test(NAME corpus COMMAND "${Python3_EXECUTABLE}"
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus_tests.py" "$<TARGET_FILE:ps5rt>")
     set_tests_properties(corpus PROPERTIES TIMEOUT 60)
+    if(PS5RT_NATIVE_PROBE)
+        add_test(NAME native_probe COMMAND "${Python3_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_probe_tests.py" "$<TARGET_FILE:ps5rt_native_probe>")
+        set_tests_properties(native_probe PROPERTIES TIMEOUT 60)
+    endif()
 endif()
