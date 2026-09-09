@@ -6,7 +6,11 @@
 
 namespace stack_fixture {
 using Bytes = std::vector<std::uint8_t>;
-inline void emit(Bytes& b, std::initializer_list<std::uint8_t> values) { b.insert(b.end(), values); }
+inline void emit(Bytes& b, std::initializer_list<std::uint8_t> values) {
+    // Append with explicit capacity-managed operations; GCC 13's optimized
+    // range-insert path diagnoses an overflow for these small growing fixtures.
+    for (const auto value : values) b.push_back(value);
+}
 inline void immediate(Bytes& b, std::uint64_t value, std::size_t width) {
     if (width > 8) throw std::runtime_error("FIXTURE_IMMEDIATE_WIDTH");
     for (std::size_t i = 0; i < width; ++i) b.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
