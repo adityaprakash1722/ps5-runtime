@@ -26,6 +26,9 @@ No console SDK, game code, firmware, keys, or community emulator source is inclu
   It does not accept arbitrary ELF inputs or implement the PS5 ABI.
 - A [guest-memory API](docs/guest-memory.md) with checked address ranges,
   permissions, gap rejection, and all-or-nothing range validation for writes.
+- A [synthetic guest-stack experiment](docs/startup-stack.md): argument setup,
+  nested calls, integer-register restoration, and guard-fault checks. This is a
+  test contract, not platform process startup.
 
 An accepted inspection means only that the implemented checks passed. It is not
 a complete ELF conformance check, a runnable-image result, or a PS5 compatibility test.
@@ -115,9 +118,9 @@ For repeatable read-only batch inspection, see the
 outside Git and contain sensitive metadata; ordinary CI uses synthetic inputs only.
 
 Fixed native execution and a generated ELF-to-execution path are implemented
-with C++ and Python expected-result checks. Next expand beyond the explicit host
-leaf-function contract to guest startup/stack and ABI support, then platform services against verified
-evidence. Graphics, audio, input, storage, scheduling,
+with C++ and Python expected-result checks, including a separate guest stack under
+an explicit synthetic contract. Next establish platform loading/startup and ABI
+support against verified evidence. Graphics, audio, input, storage, scheduling,
 game compatibility, and frame-pacing work are separate milestones—not features
 implied by reading an ELF file. See the [evidence-gated roadmap](docs/roadmap.md).
 

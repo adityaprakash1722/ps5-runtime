@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <span>
 #include <vector>
 
 namespace probe_fixture {
@@ -12,9 +13,10 @@ inline void put(std::vector<std::uint8_t>& file, std::size_t offset, std::uint64
     for (std::size_t i = 0; i < width; ++i) file.at(offset + i) = static_cast<std::uint8_t>(value >> (8 * i));
 }
 
-// Position-independent, no-argument leaf function under the HOST ABI, not a
-// platform process-entry contract. Operands use RIP-relative addressing.
-inline std::vector<std::uint8_t> make(std::uint64_t page_size) {
+// Default: position-independent, no-argument leaf function under the HOST ABI,
+// with RIP-relative operands. An optional original test payload can replace it.
+// Neither payload is evidence of a platform process-entry contract.
+inline std::vector<std::uint8_t> make(std::uint64_t page_size, std::span<const std::uint8_t> payload = {}) {
     if (page_size < 64 || page_size > 64 * 1024 * 1024)
         throw std::runtime_error("FIXTURE_PAGE_SIZE");
     const auto data_address = base + 2 * page_size;
@@ -32,6 +34,8 @@ inline std::vector<std::uint8_t> make(std::uint64_t page_size) {
     relative(0x89, data_address + 16);  // mov [rip + stored], rax
     relative(0x33, data_address + 24);  // xor rax, [rip + mask]
     code.push_back(0xc3);
+    if (!payload.empty()) code.assign(payload.begin(), payload.end());
+    if (code.size() > 0x100 || code.size() > page_size) throw std::runtime_error("FIXTURE_CODE_SIZE");
     std::vector<std::uint8_t> file(0x220, 0);
     file[0] = 0x7f; file[1] = 'E'; file[2] = 'L'; file[3] = 'F';
     file[4] = 2; file[5] = 1; file[6] = 1;

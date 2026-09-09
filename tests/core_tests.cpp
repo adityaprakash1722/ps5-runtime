@@ -2,6 +2,7 @@
 #include "ps5rt/elf.hpp"
 #include "ps5rt/loader.hpp"
 #include "ps5rt/memory.hpp"
+#include "ps5rt/startup.hpp"
 #include <array>
 
 #include <algorithm>
@@ -549,6 +550,87 @@ void memory_tests(Tests& tests) {
     });
 }
 
+void startup_tests(Tests& tests) {
+    tests.run("synthetic startup pointers, strings, alignment and zero fill", [&] {
+        const std::vector<std::vector<std::string>> cases{
+            {}, {""}, {"probe", "alpha"}, {std::string("\x80\xff", 2), ""},
+            {std::string(257, 'x'), "tail"}, std::vector<std::string>(64, "a")};
+        for (const auto& arguments : cases) {
+            constexpr std::uint64_t base = 0x12345000;
+            const auto built = ps5rt::build_startup_stack(base, 4096, arguments);
+            REQUIRE(built.ok());
+            CHECK(built.diagnostics.empty());
+            const auto& stack = *built.stack;
+            const auto frame = static_cast<std::size_t>(stack.frame_address - base);
+            CHECK(stack.base_address == base && stack.bytes.size() == 4096);
+            REQUIRE(frame >= 512 && frame + (arguments.size() + 2) * 8 <= stack.bytes.size());
+            CHECK(stack.frame_address % 16 == 0);
+            CHECK(stack.argc == arguments.size() && stack.argv_address == stack.frame_address + 8);
+            const auto read64 = [&](std::size_t offset) {
+                std::uint64_t value = 0;
+                for (std::size_t i = 0; i < 8; ++i)
+                    value |= static_cast<std::uint64_t>(stack.bytes.at(offset + i)) << (8 * i);
+                return value;
+            };
+            CHECK(read64(frame) == arguments.size());
+            CHECK(read64(frame + 8 + arguments.size() * 8) == 0);
+            const auto headroom = std::span(stack.bytes).first(frame);
+            CHECK(std::all_of(headroom.begin(), headroom.end(), [](auto b) { return b == 0; }));
+            std::size_t bytes_needed = 0;
+            for (const auto& argument : arguments) bytes_needed += argument.size() + 1;
+            auto cursor = stack.bytes.size() - bytes_needed;
+            const auto frame_end = frame + (arguments.size() + 2) * 8;
+            const auto padding = std::span(stack.bytes).subspan(frame_end, cursor - frame_end);
+            CHECK(std::all_of(padding.begin(), padding.end(), [](auto b) { return b == 0; }));
+            for (std::size_t i = 0; i < arguments.size(); ++i) {
+                CHECK(read64(frame + 8 + i * 8) == base + cursor);
+                for (const char byte : arguments[i]) CHECK(stack.bytes.at(cursor++) == static_cast<unsigned char>(byte));
+                CHECK(stack.bytes.at(cursor++) == 0);
+            }
+            CHECK(cursor == stack.bytes.size());
+            const auto repeated = ps5rt::build_startup_stack(base, 4096, arguments);
+            REQUIRE(repeated.ok());
+            CHECK(repeated.stack->bytes == stack.bytes);
+        }
+    });
+    tests.run("synthetic startup rejects invalid dimensions and arguments", [&] {
+        const auto rejected = [&](std::uint64_t base, std::uint64_t size,
+                                  const std::vector<std::string>& args, std::string_view code) {
+            const auto result = ps5rt::build_startup_stack(base, size, args);
+            CHECK(!result.ok() && !result.stack);
+            REQUIRE(result.diagnostics.size() == 1);
+            CHECK(result.diagnostics.front().code == code);
+            CHECK(result.diagnostics.front().severity == ps5rt::Severity::error);
+        };
+        rejected(1, 4096, {}, "STARTUP_ALIGNMENT");
+        rejected(0, 4097, {}, "STARTUP_ALIGNMENT");
+        rejected(0, 0, {}, "STARTUP_SIZE");
+        rejected(0, 4080, {}, "STARTUP_SIZE");
+        rejected(0, 1024 * 1024 + 16, {}, "STARTUP_SIZE");
+        rejected(std::numeric_limits<std::uint64_t>::max() - 15, 4096, {}, "STARTUP_OVERFLOW");
+        rejected(0, 4096, std::vector<std::string>(65), "STARTUP_ARGUMENT_COUNT");
+        rejected(0, 4096, {std::string("a\0b", 3)}, "STARTUP_ARGUMENT_NUL");
+        rejected(0, 65536, {std::string(16384, 'a')}, "STARTUP_ARGUMENT_BYTES");
+        rejected(0, 65536, {std::string(16383, 'a'), ""}, "STARTUP_ARGUMENT_BYTES");
+        rejected(0, 4096, {std::string(4095, 'a')}, "STARTUP_SPACE");
+        rejected(0, 4096, {std::string(3580, 'a')}, "STARTUP_HEADROOM");
+    });
+    tests.run("synthetic startup accepts exact policy boundaries", [&] {
+        auto result = ps5rt::build_startup_stack(0, 65536, std::vector<std::string>{std::string(16383, 'a')});
+        REQUIRE(result.ok());
+        CHECK(result.stack->bytes.back() == 0);
+        result = ps5rt::build_startup_stack(0, 1024 * 1024, {});
+        REQUIRE(result.ok());
+        CHECK(result.stack->bytes.size() == 1024 * 1024);
+        // 3559 bytes + terminator + 24-byte frame leaves exactly 512 bytes.
+        result = ps5rt::build_startup_stack(0, 4096, std::vector<std::string>{std::string(3559, 'a')});
+        REQUIRE(result.ok());
+        CHECK(result.stack->frame_address == 512);
+        result = ps5rt::build_startup_stack(0, 4096, std::vector<std::string>{std::string(3560, 'a')});
+        CHECK(!result.ok());
+    });
+}
+
 void bounded_mutation_tests(Tests& tests) {
     tests.run("NULL program fields are undefined and ignored", [&] {
         auto bytes = fixture::two_loads();
@@ -645,6 +727,7 @@ int main() {
     dynamic_tests(tests);
     loader_tests(tests);
     memory_tests(tests);
+    startup_tests(tests);
     bounded_mutation_tests(tests);
     return tests.finish();
 }

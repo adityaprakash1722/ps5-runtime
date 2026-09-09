@@ -60,13 +60,16 @@ and contains no supplied code. No external ELF execution interface is added here
 
 ## Startup contract and limitations
 
-The explicit contract is `host-leaf-function-v1`: an x86-64, no-argument leaf
+For `loaded-elf`, the explicit contract is `host-leaf-function-v1`: an x86-64, no-argument leaf
 function called on the host stack under the host calling convention. The normal
 host call supplies a return address. There is no guest stack switch, argc/argv,
 auxiliary vector, TLS, import resolver, syscall dispatcher, or console startup.
 An arbitrary ELF entry point does not imply this contract and must not be called
 this way. Successful synthetic execution is not a claim that platform binaries
-now run. Authorized supplied material remains available for local research.
+now run. A separate [synthetic startup experiment](startup-stack.md) uses this
+same loader path with generated argument-reading code and a dedicated stack.
+Its contract is `synthetic-stack-v1`, also not console startup. Authorized supplied
+material remains available for local research.
 
 Host protections are page-granular. Padding inside a partially used code or data
 page may be physically accessible even though the logical guest API rejects it.

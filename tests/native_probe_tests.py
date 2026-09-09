@@ -59,7 +59,23 @@ check(loaded["returned"] == ((5 + 9) * 3) ^ 0x55, "loaded RIP-relative code resu
 check(loaded["stored"] == (5 + 9) * 3 and loaded["bss_zero"] is True, "loaded data and BSS")
 check(loaded["contract"] == "host-leaf-function-v1" and loaded["ps5_execution_supported"] is False, "explicit startup scope")
 
-for mode in ("illegal-instruction", "write-code", "guard-read", "non-executable", "loaded-gap"):
+result = run("guest-stack")
+check(result.returncode == 0 and not result.stderr, f"guest stack failed: {result.returncode} {result.stderr!r}")
+lines = ready(result.stdout, "guest-stack")
+check(len(lines) == 2, "guest stack returns one result")
+startup = json.loads(lines[1])
+check(startup["contract"] == "synthetic-stack-v1" and startup["ps5_execution_supported"] is False, "synthetic stack scope")
+arguments = [[], [b""], [b"probe", b"alpha"], [b"one", b"two", b"three"],
+             [bytes([128, 255]), b""], [b"x" * 257, b"tail"]]
+check(len(startup["cases"]) == len(arguments), "all startup cases executed")
+for case, args in zip(startup["cases"], arguments):
+    check(case["argc"] == len(args), "guest reads argument count")
+    check(case["checksum"] == len(args) + sum(sum(arg) for arg in args), "independent argument-byte checksum")
+    check(case["entry_alignment"] == case["nested_alignment"] == 8, "entry and nested CALL stack alignment")
+    for field in ("host_stack_restored", "integer_registers_restored", "arguments_unchanged"):
+        check(case[field] is True, field)
+
+for mode in ("illegal-instruction", "write-code", "guard-read", "non-executable", "loaded-gap", "guest-stack-guard"):
     result = run(mode)
     check(len(ready(result.stdout, mode)) == 1, "fault cannot produce success result")
     if os.name == "nt":
@@ -82,4 +98,4 @@ check(result.returncode == 2 and not result.stdout, "arbitrary file arguments ar
 # An earlier child failure must not prevent another worker from completing.
 result = run("arithmetic")
 check(result.returncode == 0 and len(ready(result.stdout, "arithmetic")) == 2, "supervisor survives child failures")
-print(f"Native execution: 262 arithmetic vectors, loaded ELF, 5 expected faults, timeout recovery; {checks} checks passed")
+print(f"Native execution: 262 arithmetic vectors, loaded ELF, 6 startup cases, 6 expected faults, timeout recovery; {checks} checks passed")

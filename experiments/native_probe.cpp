@@ -9,8 +9,12 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <algorithm>
+#include <utility>
 #include "ps5rt/memory.hpp"
+#include "ps5rt/startup.hpp"
 #include "loaded_fixture.hpp"
+#include "stack_fixture.hpp"
 
 #if defined(_WIN32) && defined(_M_X64)
 #define WIN32_LEAN_AND_MEAN
@@ -124,6 +128,14 @@ std::uint64_t invoke_leaf(std::uint8_t* code) {
     return reinterpret_cast<Function>(code)();
 }
 
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+std::uint64_t invoke_stack(std::uint8_t* bridge, std::uint8_t* entry, std::uint8_t* frame, void* record) {
+    using Function = std::uint64_t (*)(void*, void*, void*);
+    return reinterpret_cast<Function>(bridge)(entry, frame, record);
+}
+
 std::vector<std::uint8_t> program(std::string_view mode) {
     // ENDBR64 supports hosts enforcing indirect-branch tracking.
     std::vector<std::uint8_t> bytes{0xf3, 0x0f, 0x1e, 0xfa};
@@ -157,9 +169,8 @@ std::vector<std::uint8_t> program(std::string_view mode) {
 
 void hex_value(std::uint64_t value) { std::cout << '"' << "0x" << std::hex << value << std::dec << '"'; }
 
-int loaded_experiment(std::string_view mode) {
-    Pages mapping(3);
-    const auto file = probe_fixture::make(mapping.page_size());
+ps5rt::GuestMemory prepare_loaded_mapping(Pages& mapping, std::span<const std::uint8_t> payload = {}) {
+    const auto file = probe_fixture::make(mapping.page_size(), payload);
     const auto parsed = ps5rt::parse_elf(file);
     if (!parsed.ok()) throw std::runtime_error("PROBE_PARSE");
     auto built = ps5rt::make_guest_memory(file, *parsed.image);
@@ -185,6 +196,13 @@ int loaded_experiment(std::string_view mode) {
     mapping.protect_page(0, 5);
     mapping.protect_page(1, 0);
     mapping.protect_page(2, 6);
+    return std::move(*built.memory);
+}
+
+int loaded_experiment(std::string_view mode) {
+    Pages mapping(3);
+    auto guest = prepare_loaded_mapping(mapping);
+    const auto& layout = guest.layout();
     const auto entry_offset = static_cast<std::size_t>(layout.entry - layout.base_address);
     const auto data_offset = 2 * mapping.page_size();
     std::array<std::uint64_t, 5> before{};
@@ -213,6 +231,62 @@ int loaded_experiment(std::string_view mode) {
         throw std::runtime_error("PROBE_READBACK");
     std::cout << "{\"phase\":\"result\",\"fixture\":\"loaded-elf\",\"returned\":127,\"stored\":42,"
                  "\"bss_zero\":true,\"ps5_execution_supported\":false,\"contract\":\"host-leaf-function-v1\"}\n";
+    return 0;
+}
+
+int stack_experiment(std::string_view mode) {
+    const bool fault = mode == "guest-stack-guard";
+    Pages mapping(3);
+    const auto payload = stack_fixture::entry(fault);
+    auto guest = prepare_loaded_mapping(mapping, payload);
+    Pages stack(16);
+    Pages bridge;
+    Pages observations;
+    const auto bridge_bytes = stack_fixture::bridge();
+    if (bridge_bytes.size() > bridge.size()) throw std::runtime_error("PROBE_BRIDGE_SIZE");
+    std::memcpy(bridge.data(), bridge_bytes.data(), bridge_bytes.size());
+    bridge.seal();
+    const auto entry_offset = static_cast<std::size_t>(guest.layout().entry - guest.layout().base_address);
+    const std::vector<std::vector<std::string>> cases{
+        {}, {""}, {"probe", "alpha"}, {"one", "two", "three"}, {std::string("\x80\xff", 2), ""},
+        {std::string(257, 'x'), "tail"}
+    };
+    bool first = true;
+    for (const auto& arguments : cases) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(stack.data()));
+        const auto built = ps5rt::build_startup_stack(base, stack.size(), arguments);
+        if (!built.ok()) throw std::runtime_error("PROBE_STARTUP_BUILD");
+        const auto& startup = *built.stack;
+        const auto offset = static_cast<std::size_t>(startup.frame_address - base);
+        std::memcpy(stack.data(), startup.bytes.data(), startup.bytes.size());
+        std::memset(observations.data(), 0, observations.size());
+        const auto guard = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(stack.guard()));
+        std::memcpy(observations.data() + 192, &guard, sizeof(guard));
+        if (first) std::cout << "{\"phase\":\"ready\",\"fixture\":\"" << mode
+                             << "\",\"external_binary_execution\":false}\n" << std::flush;
+        const auto checksum = invoke_stack(bridge.data(), mapping.data() + entry_offset,
+                                           stack.data() + offset, observations.data());
+        if (fault) return 1; // Expected fault did not occur.
+        std::array<std::uint64_t, 25> seen{};
+        std::memcpy(seen.data(), observations.data(), sizeof(seen));
+        std::uint64_t expected = arguments.size();
+        for (const auto& argument : arguments)
+            for (const char byte : argument) expected += static_cast<unsigned char>(byte);
+        const bool registers = std::equal(seen.begin() + 8, seen.begin() + 16, seen.begin() + 16);
+        if (checksum != expected || seen[0] != startup.frame_address - 8 || seen[1] != arguments.size() ||
+            seen[2] != startup.argv_address || seen[3] != 8 || seen[4] != seen[0] - 16 || seen[4] % 16 != 8 ||
+            seen[5] == 0 || seen[5] != seen[6] || !registers ||
+            std::memcmp(stack.data() + offset, startup.bytes.data() + offset, stack.size() - offset) != 0 ||
+            std::memcmp(stack.data(), startup.bytes.data(), 128) != 0)
+            throw std::runtime_error("PROBE_STARTUP_ORACLE");
+        if (first) std::cout << "{\"phase\":\"result\",\"fixture\":\"guest-stack\",\"cases\":[";
+        else std::cout << ',';
+        first = false;
+        std::cout << "{\"argc\":" << arguments.size() << ",\"checksum\":" << checksum
+                  << ",\"entry_alignment\":8,\"nested_alignment\":8,\"host_stack_restored\":true,"
+                     "\"integer_registers_restored\":true,\"arguments_unchanged\":true}";
+    }
+    std::cout << "],\"contract\":\"synthetic-stack-v1\",\"ps5_execution_supported\":false}\n";
     return 0;
 }
 
@@ -279,7 +353,7 @@ int main(int argc, char* argv[]) {
     const std::string_view mode(argv[1]);
     if (mode != "arithmetic" && mode != "illegal-instruction" && mode != "write-code" &&
         mode != "guard-read" && mode != "non-executable" && mode != "hang" &&
-        mode != "loaded-elf" && mode != "loaded-gap") {
+        mode != "loaded-elf" && mode != "loaded-gap" && mode != "guest-stack" && mode != "guest-stack-guard") {
         std::cerr << "PROBE_UNKNOWN_FIXTURE: files and arbitrary bytes are not accepted by this experiment\n";
         return 2;
     }
@@ -290,6 +364,7 @@ int main(int argc, char* argv[]) {
     if (setrlimit(RLIMIT_CORE, &limit) != 0) { std::cerr << "PROBE_CORE_LIMIT\n"; return 3; }
 #endif
     try {
+        if (mode == "guest-stack" || mode == "guest-stack-guard") return stack_experiment(mode);
         if (mode == "loaded-elf" || mode == "loaded-gap") return loaded_experiment(mode);
         return experiment(mode);
     }

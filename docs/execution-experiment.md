@@ -30,7 +30,9 @@ and RAX for arithmetic and its return value. A **calling convention** defines ho
 functions exchange arguments and results and which registers must be preserved.
 Windows x64 receives our pointer in RCX; Linux x86-64 System V receives it in RDI,
 so the Linux fixture moves RDI to RCX first. Neither adapter is a PS5 ABI bridge.
-The fixtures make no further calls or stack allocations.
+These arithmetic fixtures make no further calls or stack allocations. The separate
+[guest-stack fixture](startup-stack.md) now tests arguments and a nested call on
+its own stack under an explicitly synthetic contract.
 
 **Native execution** means the host CPU directly executes these instructions,
 without an interpreter translating each operation. A similar instruction set does
@@ -53,8 +55,9 @@ worker crash does not terminate the supervisor. This is fault containment for a
 test, **not a security sandbox**: workers retain their normal host privileges.
 The probe does not spawn further descendants.
 
-Four fixtures deliberately execute invalid `UD2`, write to executable code,
-read a guard page, and fetch instructions from a non-executable page. The
+Six fixtures deliberately execute invalid `UD2`, write to executable code,
+read a guard page, fetch instructions from a non-executable page, read the loaded
+image's gap, and read the stack guard while running on the guest stack. The
 supervisor requires a ready message before checking the exact expected Windows
 exception exit status or Linux signal. Arbitrary nonzero exits do not pass.
 Linux core dumps are disabled and Windows error dialogs are suppressed.
@@ -98,9 +101,9 @@ For just the successful worker:
 ```
 
 Passing does not enable executing an arbitrary ELF input. The generated ELF path
-uses an explicit host leaf-function contract, not platform process startup.
-Guest stack/startup and platform ABI support remain to be implemented before
-claiming that a supplied binary runs.
+has both a host leaf-function case and a synthetic guest-stack case, neither of
+which implements platform process startup. Platform loading/startup and ABI
+support remain necessary before claiming that a supplied binary runs.
 
 ## References
 

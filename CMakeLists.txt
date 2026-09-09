@@ -5,7 +5,7 @@ option(PS5RT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(PS5RT_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer (Clang/GCC)" OFF)
 option(PS5RT_NATIVE_PROBE "Build fixed synthetic native execution experiment (x86-64 Windows/Linux)" ON)
 
-add_library(ps5rt_core src/elf.cpp src/loader.cpp src/memory.cpp)
+add_library(ps5rt_core src/elf.cpp src/loader.cpp src/memory.cpp src/startup.cpp)
 target_include_directories(ps5rt_core PUBLIC include)
 target_compile_features(ps5rt_core PUBLIC cxx_std_20)
 set_target_properties(ps5rt_core PROPERTIES CXX_EXTENSIONS OFF)
