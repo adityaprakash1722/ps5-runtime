@@ -22,7 +22,10 @@ No console SDK, game code, firmware, keys, or community emulator source is inclu
 - Synthetic positive, negative, boundary, truncation, and seeded-mutation tests.
 - A separate [native execution experiment](docs/execution-experiment.md): fixed
   original instruction fixtures with arithmetic, memory, fault, and timeout tests.
-  This does not execute an ELF input or implement the PS5 ABI.
+  It now includes a generated ELF passed through the loader before execution.
+  It does not accept arbitrary ELF inputs or implement the PS5 ABI.
+- A [guest-memory API](docs/guest-memory.md) with checked address ranges,
+  permissions, gap rejection, and all-or-nothing range validation for writes.
 
 An accepted inspection means only that the implemented checks passed. It is not
 a complete ELF conformance check, a runnable-image result, or a PS5 compatibility test.
@@ -111,9 +114,9 @@ For repeatable read-only batch inspection, see the
 [local validation workflow](docs/local-validation.md). Its reports must stay
 outside Git and contain sensitive metadata; ordinary CI uses synthetic inputs only.
 
-The first fixed native-execution experiment is implemented with C++ and Python
-expected-result checks. Next connect controlled execution to an explicit guest
-memory/startup model, then expand loading and platform services against verified
+Fixed native execution and a generated ELF-to-execution path are implemented
+with C++ and Python expected-result checks. Next expand beyond the explicit host
+leaf-function contract to guest startup/stack and ABI support, then platform services against verified
 evidence. Graphics, audio, input, storage, scheduling,
 game compatibility, and frame-pacing work are separate milestones—not features
 implied by reading an ELF file. See the [evidence-gated roadmap](docs/roadmap.md).

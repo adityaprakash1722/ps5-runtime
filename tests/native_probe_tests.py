@@ -50,7 +50,16 @@ for case in report["cases"]:
     check(int(case["stored"], 16) == expected, "stored product")
     check(int(case["returned"], 16) == (expected ^ mask), "RAX return value")
 
-for mode in ("illegal-instruction", "write-code", "guard-read", "non-executable"):
+result = run("loaded-elf")
+check(result.returncode == 0 and not result.stderr, f"loaded ELF failed: {result.returncode} {result.stderr!r}")
+lines = ready(result.stdout, "loaded-elf")
+check(len(lines) == 2, "loaded ELF returns one result")
+loaded = json.loads(lines[1])
+check(loaded["returned"] == ((5 + 9) * 3) ^ 0x55, "loaded RIP-relative code result")
+check(loaded["stored"] == (5 + 9) * 3 and loaded["bss_zero"] is True, "loaded data and BSS")
+check(loaded["contract"] == "host-leaf-function-v1" and loaded["ps5_execution_supported"] is False, "explicit startup scope")
+
+for mode in ("illegal-instruction", "write-code", "guard-read", "non-executable", "loaded-gap"):
     result = run(mode)
     check(len(ready(result.stdout, mode)) == 1, "fault cannot produce success result")
     if os.name == "nt":
@@ -73,4 +82,4 @@ check(result.returncode == 2 and not result.stdout, "arbitrary file arguments ar
 # An earlier child failure must not prevent another worker from completing.
 result = run("arithmetic")
 check(result.returncode == 0 and len(ready(result.stdout, "arithmetic")) == 2, "supervisor survives child failures")
-print(f"Native execution: 262 arithmetic vectors, 4 expected faults, timeout recovery; {checks} checks passed")
+print(f"Native execution: 262 arithmetic vectors, loaded ELF, 5 expected faults, timeout recovery; {checks} checks passed")

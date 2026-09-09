@@ -9,7 +9,8 @@ date based on this foundation.
 | --- | --- | --- |
 | 0: implemented subset | ELF inspection and bounded offline layout | Synthetic expected-value and rejection tests; Windows/Linux builds; sanitizer checks |
 | 1a: fixed native experiment | Original instruction fixtures in a worker process; independent expected-result checks | RAX, memory, return, fault, and timeout checks; no platform compatibility claim |
-| 1b: execution integration | Explicit guest memory and startup contract connected to loading | Address translations, stack/ABI behavior, entry validation, fault diagnostics; supported local inputs |
+| 1b: implemented experiment | Checked logical guest memory and generated ELF-to-execution path | Host-leaf-function contract only; relative addressing, BSS, permissions, result/writeback and gap fault checks |
+| 1c: guest startup | Guest stack and platform entry/ABI contract | Independently justified startup state, stack behavior, fault diagnostics; supported local inputs |
 | 2: platform loading | A documented executable subset, relocations, imports, startup, and TLS | Versioned format evidence and independent tests for each supported behavior |
 | 3: essential services | Memory, threads, synchronization, clocks, files, and diagnostics | Small reference programs; error paths and concurrency behavior compared against a trusted reference |
 | 4: graphics/audio/input | Minimal rendering and playback with observable synchronization | Known-image/audio results, command traces, precision checks, input latency measurements |
@@ -18,7 +19,8 @@ date based on this foundation.
 
 These stages can require revisiting earlier assumptions. Stage 1a explores native
 execution; it does not settle the final execution architecture or connect a
-guest ELF to host execution. Similar CPU instruction sets do not settle system
+arbitrary guest ELF to host execution. Stage 1b connects only a generated fixture
+with a known host-leaf-function contract. Similar CPU instruction sets do not settle system
 calls, memory behavior, exception handling, or the platform ABI. Unknown calls
 must stop with a useful diagnostic or return a justified error—not fabricated
 success. A **system call** is a request from a program to its operating-system
@@ -52,6 +54,6 @@ good to us” and an FPS screenshot are not sufficient acceptance tests.
 - Publish compatibility claims only with reproducible scope: build, settings,
   hardware, test sequence, known failures, and evidence—not a vague “supported.”
 
-The next implementation decision is stage 1b's guest memory/startup contract and
+The next implementation decision is stage 1c's guest stack/startup contract and
 reference tests. Authorized material may be analyzed and executed locally where
 supported; missing loader/ABI behavior is a technical gap, not a permission gap.

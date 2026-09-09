@@ -9,6 +9,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "ps5rt/memory.hpp"
+#include "loaded_fixture.hpp"
 
 #if defined(_WIN32) && defined(_M_X64)
 #define WIN32_LEAN_AND_MEAN
@@ -25,7 +27,7 @@
 namespace {
 class Pages {
 public:
-    Pages() {
+    explicit Pages(std::size_t middle_pages = 1) {
 #ifdef _WIN32
         SYSTEM_INFO info{};
         GetSystemInfo(&info);
@@ -35,22 +37,25 @@ public:
         if (size <= 0) throw std::runtime_error("PROBE_PAGE_SIZE");
         page_ = static_cast<std::size_t>(size);
 #endif
-        if (page_ < 64 || page_ > std::numeric_limits<std::size_t>::max() / 3)
+        if (page_ < 64 || page_ > 64 * 1024 * 1024 || middle_pages == 0 ||
+            middle_pages > (64 * 1024 * 1024) / page_)
             throw std::runtime_error("PROBE_PAGE_SIZE");
+        span_ = page_ * middle_pages;
+        total_ = span_ + 2 * page_;
 #ifdef _WIN32
-        base_ = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, page_ * 3,
+        base_ = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, total_,
             MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
         if (!base_) throw std::runtime_error("PROBE_ALLOCATE");
         DWORD old = 0;
-        if (!VirtualProtect(data(), page_, PAGE_READWRITE, &old)) {
+        if (!VirtualProtect(data(), span_, PAGE_READWRITE, &old)) {
             release();
             throw std::runtime_error("PROBE_WRITABLE");
         }
 #else
-        auto* mapped = mmap(nullptr, page_ * 3, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        auto* mapped = mmap(nullptr, total_, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped == MAP_FAILED) throw std::runtime_error("PROBE_ALLOCATE");
         base_ = static_cast<std::uint8_t*>(mapped);
-        if (mprotect(data(), page_, PROT_READ | PROT_WRITE) != 0) {
+        if (mprotect(data(), span_, PROT_READ | PROT_WRITE) != 0) {
             release();
             throw std::runtime_error("PROBE_WRITABLE");
         }
@@ -61,19 +66,28 @@ public:
     ~Pages() { release(); }
     std::uint8_t* data() const { return base_ + page_; }
     std::uint8_t* guard() const { return base_; }
-    std::size_t size() const { return page_; }
-    void seal() {
+    std::size_t size() const { return span_; }
+    std::size_t page_size() const { return page_; }
+    void protect_page(std::size_t index, std::uint32_t flags) {
+        if (index >= span_ / page_ || (flags != 0 && flags != 4 && flags != 5 && flags != 6))
+            throw std::runtime_error("PROBE_PAGE_POLICY");
+        auto* page = data() + index * page_;
 #ifdef _WIN32
+        const DWORD permission = flags == 0 ? PAGE_NOACCESS : flags == 4 ? PAGE_READONLY :
+            flags == 5 ? PAGE_EXECUTE_READ : PAGE_READWRITE;
         DWORD old = 0;
-        if (!VirtualProtect(data(), page_, PAGE_EXECUTE_READ, &old))
-            throw std::runtime_error("PROBE_EXECUTABLE");
-        if (!FlushInstructionCache(GetCurrentProcess(), data(), page_))
+        if (!VirtualProtect(page, page_, permission, &old)) throw std::runtime_error("PROBE_PROTECT");
+        if ((flags & 1U) && !FlushInstructionCache(GetCurrentProcess(), page, page_))
             throw std::runtime_error("PROBE_CACHE");
 #else
-        if (mprotect(data(), page_, PROT_READ | PROT_EXEC) != 0)
-            throw std::runtime_error("PROBE_EXECUTABLE");
-        __builtin___clear_cache(reinterpret_cast<char*>(data()), reinterpret_cast<char*>(data() + page_));
+        const int permission = flags == 0 ? PROT_NONE : flags == 4 ? PROT_READ :
+            flags == 5 ? PROT_READ | PROT_EXEC : PROT_READ | PROT_WRITE;
+        if (mprotect(page, page_, permission) != 0) throw std::runtime_error("PROBE_PROTECT");
+        if (flags & 1U) __builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + page_));
 #endif
+    }
+    void seal() {
+        for (std::size_t i = 0; i < span_ / page_; ++i) protect_page(i, 5);
     }
 private:
     void release() noexcept {
@@ -81,12 +95,14 @@ private:
 #ifdef _WIN32
         VirtualFree(base_, 0, MEM_RELEASE);
 #else
-        munmap(base_, page_ * 3);
+        munmap(base_, total_);
 #endif
         base_ = nullptr;
     }
     std::uint8_t* base_ = nullptr;
     std::size_t page_ = 0;
+    std::size_t span_ = 0;
+    std::size_t total_ = 0;
 };
 
 // Clang's function-type sanitizer reads metadata preceding a compiled function.
@@ -132,6 +148,64 @@ std::vector<std::uint8_t> program(std::string_view mode) {
 }
 
 void hex_value(std::uint64_t value) { std::cout << '"' << "0x" << std::hex << value << std::dec << '"'; }
+
+int loaded_experiment(std::string_view mode) {
+    Pages mapping(3);
+    const auto file = probe_fixture::make(mapping.page_size());
+    const auto parsed = ps5rt::parse_elf(file);
+    if (!parsed.ok()) throw std::runtime_error("PROBE_PARSE");
+    auto built = ps5rt::make_guest_memory(file, *parsed.image);
+    if (!built.ok()) throw std::runtime_error("PROBE_LOAD");
+    auto& guest = *built.memory;
+    const auto& layout = guest.layout();
+    if (layout.base_address != probe_fixture::base || layout.regions.size() != 2 ||
+        layout.image_size != 2 * mapping.page_size() + 40 || guest.check_execute(layout.entry, 1))
+        throw std::runtime_error("PROBE_LAYOUT");
+    if (layout.regions[0].virtual_address != layout.base_address || layout.regions[0].flags != 5 ||
+        layout.regions[0].memory_size > mapping.page_size() ||
+        layout.regions[1].virtual_address != layout.base_address + 2 * mapping.page_size() ||
+        layout.regions[1].flags != 6 || layout.regions[1].file_size != 32 || layout.regions[1].memory_size != 40)
+        throw std::runtime_error("PROBE_SEGMENT_POLICY");
+    for (const auto& region : layout.regions) {
+        const auto offset = static_cast<std::size_t>(region.virtual_address - layout.base_address);
+        if (offset > mapping.size() || region.memory_size > mapping.size() - offset)
+            throw std::runtime_error("PROBE_MAPPING_BOUNDS");
+        if (guest.read(region.virtual_address, std::span(mapping.data() + offset,
+                static_cast<std::size_t>(region.memory_size)))) throw std::runtime_error("PROBE_COPY");
+    }
+    // Known fixture only: do not guess/merge arbitrary ELF page permissions.
+    mapping.protect_page(0, 5);
+    mapping.protect_page(1, 0);
+    mapping.protect_page(2, 6);
+    const auto entry_offset = static_cast<std::size_t>(layout.entry - layout.base_address);
+    const auto data_offset = 2 * mapping.page_size();
+    std::array<std::uint64_t, 5> before{};
+    std::memcpy(before.data(), mapping.data() + data_offset, sizeof(before));
+    if (before[4] != 0) throw std::runtime_error("PROBE_BSS");
+    std::cout << "{\"phase\":\"ready\",\"fixture\":\"" << mode
+              << "\",\"external_binary_execution\":false}\n" << std::flush;
+    if (mode == "loaded-gap") {
+        const auto observed = *static_cast<volatile std::uint8_t*>(mapping.data() + mapping.page_size());
+        (void)observed;
+        return 1;
+    }
+    const auto returned = invoke(mapping.data() + entry_offset, nullptr);
+    std::array<std::uint64_t, 5> after{};
+    std::memcpy(after.data(), mapping.data() + data_offset, sizeof(after));
+    if (returned != 127 || after[0] != 5 || after[1] != 9 || after[2] != 42 || after[3] != 0x55 || after[4] != 0)
+        throw std::runtime_error("PROBE_LOADED_ORACLE");
+    // Logical backing and native pages are distinct. Synchronize this known
+    // result range explicitly; this is not automatic tracking of guest writes.
+    if (guest.write(layout.base_address + data_offset + 16,
+            std::span(mapping.data() + data_offset + 16, sizeof(std::uint64_t))))
+        throw std::runtime_error("PROBE_WRITEBACK");
+    std::array<std::uint8_t, 8> stored{};
+    if (guest.read(layout.base_address + data_offset + 16, stored) || stored[0] != 42)
+        throw std::runtime_error("PROBE_READBACK");
+    std::cout << "{\"phase\":\"result\",\"fixture\":\"loaded-elf\",\"returned\":127,\"stored\":42,"
+                 "\"bss_zero\":true,\"ps5_execution_supported\":false,\"contract\":\"host-leaf-function-v1\"}\n";
+    return 0;
+}
 
 int experiment(std::string_view mode) {
     Pages code;
@@ -195,7 +269,8 @@ int main(int argc, char* argv[]) {
     if (argc != 2) { std::cerr << "Usage: ps5rt_native_probe <fixed-fixture-name>\n"; return 2; }
     const std::string_view mode(argv[1]);
     if (mode != "arithmetic" && mode != "illegal-instruction" && mode != "write-code" &&
-        mode != "guard-read" && mode != "non-executable" && mode != "hang") {
+        mode != "guard-read" && mode != "non-executable" && mode != "hang" &&
+        mode != "loaded-elf" && mode != "loaded-gap") {
         std::cerr << "PROBE_UNKNOWN_FIXTURE: files and arbitrary bytes are not accepted by this experiment\n";
         return 2;
     }
@@ -205,6 +280,9 @@ int main(int argc, char* argv[]) {
     const rlimit limit{0, 0};
     if (setrlimit(RLIMIT_CORE, &limit) != 0) { std::cerr << "PROBE_CORE_LIMIT\n"; return 3; }
 #endif
-    try { return experiment(mode); }
+    try {
+        if (mode == "loaded-elf" || mode == "loaded-gap") return loaded_experiment(mode);
+        return experiment(mode);
+    }
     catch (const std::exception&) { std::cerr << "PROBE_HOST_SETUP_FAILURE\n"; return 3; }
 }

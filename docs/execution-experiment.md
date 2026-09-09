@@ -2,7 +2,10 @@
 
 This experiment runs original, fixed x86-64 machine instructions on the host CPU.
 It is a native-execution probe, **not a CPU emulator, PS5 runner, or game boot**.
-It is separate from the ELF inspector and offline loader. Its command line accepts
+The original arithmetic fixtures are separate from loading; the new `loaded-elf`
+fixture connects a generated ELF to the parser, loader, and checked guest-memory
+API before execution. See [guest memory and loaded execution](guest-memory.md).
+The worker command line accepts
 fixture names, not filenames or arbitrary machine code. That interface defines
 this experiment's scope, not a restriction on authorized local research.
 
@@ -94,9 +97,10 @@ For just the successful worker:
 .\build\Debug\ps5rt_native_probe.exe arithmetic
 ```
 
-Passing does not enable executing an ELF input. The next integration needs a
-guest address-space model, startup/stack contract, entry-point validation, and
-the relevant loading/ABI support before claiming that a supplied binary runs.
+Passing does not enable executing an arbitrary ELF input. The generated ELF path
+uses an explicit host leaf-function contract, not platform process startup.
+Guest stack/startup and platform ABI support remain to be implemented before
+claiming that a supplied binary runs.
 
 ## References
 

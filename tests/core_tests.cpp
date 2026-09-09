@@ -1,6 +1,8 @@
 #include "fixture_builder.hpp"
 #include "ps5rt/elf.hpp"
 #include "ps5rt/loader.hpp"
+#include "ps5rt/memory.hpp"
+#include <array>
 
 #include <algorithm>
 #include <cstdint>
@@ -449,6 +451,104 @@ void loader_tests(Tests& tests) {
     });
 }
 
+void memory_tests(Tests& tests) {
+    tests.run("guest memory permissions gaps and zero initialization", [&] {
+        const auto file = fixture::two_loads();
+        const auto parsed = ps5rt::parse_elf(file);
+        REQUIRE(parsed.ok());
+        auto built = ps5rt::make_guest_memory(file, *parsed.image);
+        REQUIRE(built.ok());
+        auto& memory = *built.memory;
+        const auto check_code = [&](const std::optional<ps5rt::Diagnostic>& error, std::string_view code) {
+            CHECK(error.has_value());
+            if (error) CHECK(error->code == code);
+        };
+        std::array<std::uint8_t, 8> bytes{};
+        CHECK(!memory.read(0x1000, bytes));
+        CHECK(bytes[0] == 0xd0 && bytes[7] == 0xd7);
+        CHECK(!memory.check_execute(0x1000, 16));
+        const auto denied_write = memory.write(0x1000, bytes);
+        REQUIRE(denied_write.has_value());
+        CHECK(denied_write->code == "MEMORY_PERMISSION");
+        CHECK(memory.check_execute(0x1200, 1).has_value());
+        bytes.fill(0xff);
+        CHECK(!memory.read(0x1208, bytes));
+        CHECK(std::all_of(bytes.begin(), bytes.end(), [](auto b) { return b == 0; }));
+        bytes.fill(0x5a);
+        CHECK(!memory.write(0x1208, bytes));
+        bytes.fill(0);
+        CHECK(!memory.read(0x1208, bytes));
+        CHECK(bytes[0] == 0x5a && bytes[7] == 0x5a);
+        std::array<std::uint8_t, 16> too_long{};
+        too_long.fill(0xcc);
+        CHECK(memory.write(0x1208, too_long).has_value());
+        CHECK(!memory.read(0x1208, bytes));
+        CHECK(std::all_of(bytes.begin(), bytes.end(), [](auto b) { return b == 0x5a; }));
+        check_code(memory.read(0x1100, bytes), "MEMORY_UNMAPPED");
+        check_code(memory.read(0x0fff, bytes), "MEMORY_UNMAPPED");
+        check_code(memory.read(0x1210, bytes), "MEMORY_UNMAPPED");
+        check_code(memory.read(std::numeric_limits<std::uint64_t>::max() - 3, bytes), "MEMORY_OVERFLOW");
+        CHECK(!memory.read(std::numeric_limits<std::uint64_t>::max(), {}));
+        CHECK(!memory.write(0, {}));
+        CHECK(!memory.check_execute(0, 0));
+    });
+    tests.run("cross-segment access checks all permissions before copying", [&] {
+        const auto file = fixture::two_loads();
+        auto parsed = ps5rt::parse_elf(file);
+        REQUIRE(parsed.ok());
+        parsed.image->header.entry = 0;
+        auto& first = parsed.image->programs[0];
+        auto& second = parsed.image->programs[1];
+        first.flags = 6;
+        second.virtual_address = first.virtual_address + first.memory_size;
+        second.alignment = 1;
+        second.flags = 4;
+        auto built = ps5rt::make_guest_memory(file, *parsed.image);
+        REQUIRE(built.ok());
+        std::array<std::uint8_t, 16> before{};
+        CHECK(!built.memory->read(0x1018, before));
+        auto replacement = before;
+        replacement.fill(0xcc);
+        REQUIRE(built.memory->write(0x1018, replacement).has_value());
+        std::array<std::uint8_t, 16> after{};
+        CHECK(!built.memory->read(0x1018, after));
+        CHECK(before == after);
+        second.flags = 6;
+        built = ps5rt::make_guest_memory(file, *parsed.image);
+        REQUIRE(built.ok());
+        CHECK(!built.memory->write(0x1018, replacement));
+        CHECK(!built.memory->read(0x1018, after));
+        CHECK(after == replacement);
+        after.fill(0x77);
+        CHECK(built.memory->read(0x1028, after).has_value());
+        CHECK(std::all_of(after.begin(), after.end(), [](auto b) { return b == 0x77; }));
+    });
+    tests.run("guest memory creation preserves loader rejection and limits", [&] {
+        const auto file = fixture::minimal();
+        auto parsed = ps5rt::parse_elf(file);
+        REQUIRE(parsed.ok());
+        CHECK(!ps5rt::make_guest_memory(file, *parsed.image, {31}).ok());
+        parsed.image->header.machine = 183;
+        CHECK(!ps5rt::make_guest_memory(file, *parsed.image).ok());
+    });
+    tests.run("guest reads match an independent bounded-range oracle", [&] {
+        const auto file = fixture::two_loads();
+        const auto parsed = ps5rt::parse_elf(file);
+        REQUIRE(parsed.ok());
+        auto built = ps5rt::make_guest_memory(file, *parsed.image);
+        REQUIRE(built.ok());
+        for (std::uint64_t address = 0xff8; address <= 0x1218; ++address) {
+            for (const std::size_t size : {std::size_t{1}, std::size_t{8}, std::size_t{32}}) {
+                std::array<std::uint8_t, 32> buffer{};
+                const bool expected = (address >= 0x1000 && address + size <= 0x1020) ||
+                                      (address >= 0x1200 && address + size <= 0x1210);
+                const auto error = built.memory->read(address, std::span(buffer).first(size));
+                CHECK(error.has_value() != expected);
+            }
+        }
+    });
+}
+
 void bounded_mutation_tests(Tests& tests) {
     tests.run("NULL program fields are undefined and ignored", [&] {
         auto bytes = fixture::two_loads();
@@ -544,6 +644,7 @@ int main() {
     parser_tests(tests);
     dynamic_tests(tests);
     loader_tests(tests);
+    memory_tests(tests);
     bounded_mutation_tests(tests);
     return tests.finish();
 }

@@ -48,6 +48,10 @@ such gaps should become accessible pages in an eventual executable mapping.
 The array index for a guest address is `guest_address - plan.base_address`.
 For example, base `0x400000` and address `0x400010` yield array index `0x10` (16).
 The array contains a representation of the layout, not runnable guest memory.
+The new [GuestMemory layer](guest-memory.md) checks permissions and mapped ranges
+over this representation. A separate fixed experiment copies a generated ELF's
+segments into native pages and executes it under an explicit host-function
+contract; the general loader and inspector still do not execute inputs.
 
 ## Why layout is not execution
 
