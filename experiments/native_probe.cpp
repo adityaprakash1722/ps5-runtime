@@ -116,6 +116,14 @@ std::uint64_t invoke(std::uint8_t* code, std::uint8_t* state) {
     return reinterpret_cast<Function>(code)(state);
 }
 
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+std::uint64_t invoke_leaf(std::uint8_t* code) {
+    using Function = std::uint64_t (*)();
+    return reinterpret_cast<Function>(code)();
+}
+
 std::vector<std::uint8_t> program(std::string_view mode) {
     // ENDBR64 supports hosts enforcing indirect-branch tracking.
     std::vector<std::uint8_t> bytes{0xf3, 0x0f, 0x1e, 0xfa};
@@ -189,7 +197,7 @@ int loaded_experiment(std::string_view mode) {
         (void)observed;
         return 1;
     }
-    const auto returned = invoke(mapping.data() + entry_offset, nullptr);
+    const auto returned = invoke_leaf(mapping.data() + entry_offset);
     std::array<std::uint64_t, 5> after{};
     std::memcpy(after.data(), mapping.data() + data_offset, sizeof(after));
     if (returned != 127 || after[0] != 5 || after[1] != 9 || after[2] != 42 || after[3] != 0x55 || after[4] != 0)
@@ -200,7 +208,8 @@ int loaded_experiment(std::string_view mode) {
             std::span(mapping.data() + data_offset + 16, sizeof(std::uint64_t))))
         throw std::runtime_error("PROBE_WRITEBACK");
     std::array<std::uint8_t, 8> stored{};
-    if (guest.read(layout.base_address + data_offset + 16, stored) || stored[0] != 42)
+    const std::array<std::uint8_t, 8> expected_stored{42, 0, 0, 0, 0, 0, 0, 0};
+    if (guest.read(layout.base_address + data_offset + 16, stored) || stored != expected_stored)
         throw std::runtime_error("PROBE_READBACK");
     std::cout << "{\"phase\":\"result\",\"fixture\":\"loaded-elf\",\"returned\":127,\"stored\":42,"
                  "\"bss_zero\":true,\"ps5_execution_supported\":false,\"contract\":\"host-leaf-function-v1\"}\n";
